@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="ru" dir="ltr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>DabaTaxi</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; }
+    #map { height: 260px; width: 100%; border-radius: 16px; z-index: 10; }
+    .leaflet-control-attribution { font-size: 9px !important; opacity: 0.6; }
+  </style>
+</head>
+<body class="min-h-screen pb-10 select-none">
+
+  <!-- HEADER: App Brand + 4 Languages -->
+  <div class="sticky top-0 z-50 bg-slate-900/95 backdrop-blur border-b border-slate-800 px-3 py-2.5 flex items-center justify-between">
+    <div class="flex items-center gap-2">
+      <span class="text-xl">🚕</span>
+      <span class="font-bold text-base tracking-tight text-amber-400">DabaTaxi</span>
+    </div>
+    <div class="flex items-center gap-1 bg-slate-800 p-1 rounded-lg text-xs font-semibold">
+      <button onclick="setLang('ru')" id="lang-ru" class="px-2 py-1 rounded">RU</button>
+      <button onclick="setLang('en')" id="lang-en" class="px-2 py-1 rounded">EN</button>
+      <button onclick="setLang('fr')" id="lang-fr" class="px-2 py-1 rounded">FR</button>
+      <button onclick="setLang('ar')" id="lang-ar" class="px-2 py-1 rounded">AR</button>
+    </div>
+  </div>
+
+  <!-- NAVIGATION TABS -->
+  <div class="px-3 pt-3">
+    <div class="grid grid-cols-4 gap-1 bg-slate-800/90 p-1 rounded-xl text-xs font-semibold">
+      <button onclick="switchTab('passenger')" id="tab-passenger" class="py-2 rounded-lg bg-amber-500 text-slate-950 font-bold">
+        🧍 <span data-i18n="tab_passenger">Пассажир</span>
+      </button>
+      <button onclick="switchTab('driver')" id="tab-driver" class="py-2 rounded-lg text-slate-300">
+        🚘 <span data-i18n="tab_driver">Водитель</span>
+      </button>
+      <button onclick="switchTab('register')" id="tab-register" class="py-2 rounded-lg text-slate-300">
+        📝 <span data-i18n="tab_register">Анкета</span>
+      </button>
+      <button onclick="switchTab('support')" id="tab-support" class="py-2 rounded-lg text-slate-300">
+        🆘 <span data-i18n="tab_support">Помощь</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ==================== PASSENGER VIEW ==================== -->
+  <div id="view-passenger" class="px-3 pt-3 space-y-3">
+
+    <!-- ACTIVE RIDE CARD (Shown when passenger has an active order) -->
+    <div id="passenger-active-card" class="hidden bg-slate-800 border-2 border-amber-500 p-4 rounded-2xl space-y-3 shadow-xl">
+      <div class="flex items-center justify-between border-b border-slate-700 pb-2">
+        <span id="p-ride-status" class="font-bold text-amber-400 text-sm">🔍 Поиск водителя...</span>
+        <span id="p-ride-price" class="text-lg font-extrabold text-white">0 ₽</span>
+      </div>
+
+      <div class="text-xs space-y-1 text-slate-300">
+        <div>🅰 <span id="p-ride-pickup"></span></div>
+        <div>🅱 <span id="p-ride-dropoff"></span></div>
+      </div>
+
+      <!-- RAISE PRICE BIDDING BOX (While searching for a driver) -->
+      <div id="p-raise-box" class="bg-slate-900 p-3 rounded-xl space-y-2 border border-slate-700">
+        <div class="text-xs text-amber-300 font-semibold" data-i18n="raise_hint">
+          💡 Нет свободных водителей? Поднимите цену (как в InDrive):
+        </div>
+        <div class="flex gap-1.5">
+          <button onclick="raiseActiveRide(50)" class="flex-1 bg-emerald-600 py-2 rounded-lg text-xs font-bold">+50 ₽</button>
+          <button onclick="raiseActiveRide(100)" class="flex-1 bg-amber-500 text-slate-950 py-2 rounded-lg text-xs font-bold">+100 ₽</button>
+        </div>
+        <div class="flex gap-1.5 pt-1">
+          <input id="custom-price-input" type="number" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs" placeholder="Своя цена в RUB (например 450)" />
+          <button onclick="setCustomActivePrice()" class="bg-blue-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold">OK</button>
+        </div>
+      </div>
+
+      <!-- DRIVER INFO & MANUAL P2P PAYMENT DETAILS (Shown once driver accepts) -->
+      <div id="p-driver-box" class="hidden bg-slate-900 p-3 rounded-xl space-y-2.5 border border-emerald-500/50">
+        <div class="text-xs font-bold text-emerald-400" data-i18n="driver_assigned">🚘 Водитель назначен:</div>
+        <div id="p-driver-info" class="text-xs text-slate-200 space-y-0.5"></div>
+
+        <!-- Payment Box with Copy Button & CIH Instant Warning -->
+        <div class="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2">
+          <div class="text-xs text-slate-400" data-i18n="pay_to_driver">Сумма и реквизиты для перевода водителю:</div>
+          <div id="p-pay-amount" class="text-sm font-extrabold text-amber-400"></div>
+          <div id="p-cih-warning" class="hidden text-xs font-extrabold text-rose-400 bg-rose-950/60 border border-rose-700 p-2 rounded-lg">
+            ⚠️ Instant Payment Only (Virement Instantané) — Обязательно мгновенный перевод!
+          </div>
+          <div class="flex items-center justify-between gap-2 bg-slate-900 p-2 rounded-lg">
+            <code id="p-pay-requisite" class="text-xs text-emerald-300 break-all"></code>
+            <button onclick="copyRequisite()" class="bg-slate-700 hover:bg-slate-600 px-2.5 py-1 rounded text-xs font-bold shrink-0">
+              📋 Copy
+            </button>
+          </div>
+        </div>
+
+        <!-- Step 1: Passenger clicks "I Have Paid" -->
+        <button id="btn-passenger-paid" onclick="markPassengerPaid()" class="w-full py-3 rounded-xl bg-emerald-500 text-slate-950 font-extrabold text-xs shadow-lg">
+          ✅ <span data-i18n="btn_i_paid">Я оплатил (I Have Paid)</span>
+        </button>
+      </div>
+
+      <!-- 1-5 STAR RATING (Shown after driver confirms receipt) -->
+      <div id="p-rating-box" class="hidden bg-slate-900 p-3 rounded-xl text-center space-y-2">
+        <div class="text-xs font-bold text-amber-400" data-i18n="rate_driver">Оцените поездку (1–5 звезд):</div>
+        <div class="flex justify-center gap-2 text-2xl">
+          <button onclick="submitRating(1)">⭐</button>
+          <button onclick="submitRating(2)">⭐</button>
+          <button onclick="submitRating(3)">⭐</button>
+          <button onclick="submitRating(4)">⭐</button>
+          <button onclick="submitRating(5)">⭐</button>
+        </div>
+      </div>
+
+      <button id="btn-cancel-ride" onclick="cancelActiveRide()" class="w-full py-2 rounded-xl bg-rose-600/30 border border-rose-500/40 text-rose-300 text-xs font-bold">
+        ❌ <span data-i18n="btn_cancel_order">Отменить заказ</span>
+      </button>
+    </div>
+
+    <!-- BOOKING FORM (Map + Search + Price Calculator) -->
+    <div id="passenger-booking-form" class="space-y-3">
+      <div class="flex items-center justify-between bg-slate-800/80 px-3 py-2 rounded-xl text-xs">
+        <span class="text-slate-300" data-i18n="tap_map_hint">Точка на карте:</span>
+        <div class="flex gap-1.5">
+          <button onclick="setPinMode('pickup')" id="pin-pickup-btn" class="px-2.5 py-1 rounded-lg bg-emerald-500 text-slate-950 font-bold">
+            🅰 <span data-i18n="pickup_short">Откуда</span>
+          </button>
+          <button onclick="setPinMode('dropoff')" id="pin-dropoff-btn" class="px-2.5 py-1 rounded-lg bg-slate-700 text-slate-200">
+            🅱 <span data-i18n="dropoff_short">Куда</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="relative">
+        <div id="map" class="border border-slate-700 shadow-lg"></div>
+        <button onclick="locateMe()" class="absolute bottom-3 right-3 z-20 bg-slate-900/90 border border-slate-700 px-3 py-1.5 rounded-xl text-xs font-semibold shadow-lg">
+          📍 <span data-i18n="my_gps">Где я</span>
+        </button>
+      </div>
+
+      <div class="bg-slate-800/90 p-3 rounded-2xl space-y-2.5 border border-slate-700/70">
+        <div class="relative">
+          <div class="flex items-center gap-2">
+            <span class="text-emerald-400 font-bold text-sm">🅰</span>
+            <input id="pickup-input" type="text" oninput="debouncedSearch('pickup')"
+              class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-amber-400"
+              placeholder="Откуда (адрес в РФ или точка на карте)" />
+          </div>
+          <div id="pickup-results" class="hidden mt-1 bg-slate-950 border border-slate-700 rounded-xl max-h-40 overflow-y-auto divide-y divide-slate-800 text-xs"></div>
+        </div>
+
+        <div class="relative">
+          <div class="flex items-center gap-2">
+            <span class="text-rose-400 font-bold text-sm">🅱</span>
+            <input id="dropoff-input" type="text" oninput="debouncedSearch('dropoff')"
+              class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-amber-400"
+              placeholder="Куда (адрес в РФ или точка на карте)" />
+          </div>
+          <div id="dropoff-results" class="hidden mt-1 bg-slate-950 border border-slate-700 rounded-xl max-h-40 overflow-y-auto divide-y divide-slate-800 text-xs"></div>
+        </div>
+      </div>
+
+      <div class="bg-slate-800/90 p-3.5 rounded-2xl border border-slate-700/70 space-y-3">
+        <div class="flex items-center justify-between text-xs text-slate-300 border-b border-slate-700/80 pb-2">
+          <div>📏 <span data-i18n="distance">Расстояние</span>: <b id="stat-km" class="text-white">0.0</b> км</div>
+          <div>⏱ <span data-i18n="duration">Время</span>: <b id="stat-min" class="text-white">0</b> мин</div>
+        </div>
+
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="text-xs text-slate-400" data-i18n="recommended_price">Цена поездки (RUB):</div>
+            <div class="text-2xl font-extrabold text-amber-400"><span id="price-rub">0</span> ₽</div>
+            <div id="converted-price" class="text-xs text-slate-400 mt-0.5">≈ 0 MAD | ≈ 0 USDT</div>
+          </div>
+          <div class="flex gap-1">
+            <button onclick="adjustPrice(-50)" class="bg-slate-700 px-2.5 py-1.5 rounded-lg text-xs font-bold">-50 ₽</button>
+            <button onclick="adjustPrice(50)" class="bg-emerald-600 px-2.5 py-1.5 rounded-lg text-xs font-bold">+50 ₽</button>
+            <button onclick="adjustPrice(100)" class="bg-amber-500 text-slate-950 px-2.5 py-1.5 rounded-lg text-xs font-bold">+100 ₽</button>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs text-slate-400 mb-1.5" data-i18n="select_payment">Способ оплаты водителю (напрямую):</label>
+          <div class="grid grid-cols-2 gap-1.5 text-xs font-semibold">
+            <button onclick="selectPay('cash')" id="pay-cash" class="py-2 px-2 rounded-xl border border-amber-400 bg-amber-500/20 text-amber-300 text-left">
+              💵 <span data-i18n="pay_cash">Наличные (RUB)</span>
+            </button>
+            <button onclick="selectPay('sbp')" id="pay-sbp" class="py-2 px-2 rounded-xl border border-slate-700 bg-slate-900 text-slate-300 text-left">
+              📱 <span data-i18n="pay_sbp">Перевод СБП (РФ)</span>
+            </button>
+            <button onclick="selectPay('cih')" id="pay-cih" class="py-2 px-2 rounded-xl border border-slate-700 bg-slate-900 text-slate-300 text-left">
+              🏦 <span data-i18n="pay_cih">CIH Bank (MAD)</span>
+            </button>
+            <button onclick="selectPay('crypto')" id="pay-crypto" class="py-2 px-2 rounded-xl border border-slate-700 bg-slate-900 text-slate-300 text-left">
+              💎 <span data-i18n="pay_crypto">Crypto (USDT)</span>
+            </button>
+          </div>
+        </div>
+
+        <button onclick="createOrder()" class="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-sm shadow-lg">
+          🚕 <span data-i18n="btn_order">Заказать такси</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== DRIVER VIEW ==================== -->
+  <div id="view-driver" class="hidden px-3 pt-3 space-y-3">
+    <div id="driver-active-order" class="hidden bg-slate-800 border-2 border-emerald-500 p-4 rounded-2xl space-y-3"></div>
+
+    <div class="bg-slate-800/90 p-3.5 rounded-2xl border border-slate-700 space-y-2.5">
+      <div class="flex items-center justify-between">
+        <h3 class="font-bold text-sm text-amber-400">📡 <span data-i18n="driver_panel_title">Доступные заказы пассажиров</span></h3>
+        <button onclick="pollDriverOrders()" class="text-xs bg-slate-700 px-2.5 py-1 rounded-lg">🔄 Обновить</button>
+      </div>
+      <div id="driver-orders-list" class="space-y-2.5 text-xs text-slate-300"></div>
+    </div>
+  </div>
+
+  <!-- ==================== DRIVER REGISTRATION VIEW ==================== -->
+  <div id="view-register" class="hidden px-3 pt-3 space-y-3">
+    <div class="bg-slate-800/90 p-4 rounded-2xl border border-slate-700 space-y-3">
+      <h2 class="font-bold text-base text-amber-400" data-i18n="reg_title">📝 Регистрация водителя и реквизитов</h2>
+      <div class="space-y-2 text-xs">
+        <input id="drv-name" type="text" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2" placeholder="Имя и Фамилия (Full Name)" />
+        <input id="drv-car" type="text" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2" placeholder="Марка, модель и цвет авто (Белый Hyundai Solaris)" />
+        <input id="drv-plate" type="text" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2" placeholder="Госномер (А123ВС 777)" />
+        <input id="drv-sbp" type="text" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2" placeholder="Телефон СБП РФ + Банк (+7999... Сбер / Т-Банк)" />
+        <input id="drv-cih" type="text" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2" placeholder="CIH Bank RIB / Счет (для MAD — Virement Instantané)" />
+        <input id="drv-crypto" type="text" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2" placeholder="Crypto Wallet (USDT TRC-20 / TON)" />
+      </div>
+      <button onclick="submitDriverReg()" class="w-full py-3 rounded-xl bg-emerald-500 text-slate-950 font-extrabold text-sm">
+        ✅ <span data-i18n="btn_save_driver">Отправить заявку администратору</span>
+      </button>
+      <div id="drv-status-msg" class="text-center text-xs font-semibold text-emerald-400 hidden"></div>
+    </div>
+  </div>
+
+  <!-- ==================== ADMIN SUPPORT / DISPUTE VIEW ==================== -->
+  <div id="view-support" class="hidden px-3 pt-3 space-y-3">
+    <div class="bg-slate-800/90 p-4 rounded-2xl border border-slate-700 space-y-3">
+      <h2 class="font-bold text-base text-rose-400">🆘 Поддержка / Спор по оплате</h2>
+      <p class="text-xs text-slate-300">Опишите проблему или спор по переводу. Администратор получит уведомление в Telegram (вы также можете отправить скриншот чека прямо в чат бота).</p>
+      <textarea id="support-text" rows="4" class="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs" placeholder="Напишите номер заказа и суть проблемы..."></textarea>
+      <button onclick="sendSupportDispute()" class="w-full py-3 rounded-xl bg-rose-500 text-white font-extrabold text-xs">
+        📨 Отправить администратору
+      </button>
+    </div>
+  </div>
+
+  <script>
+    const tg = window.Telegram?.WebApp;
+    if (tg) { tg.expand(); tg.ready(); }
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const currentUserId = tg?.initDataUnsafe?.user?.id || Number(urlParams.get("user_id")) || 1001;
+    const currentUsername = tg?.initDataUnsafe?.user?.username || "";
+
+    const I18N = {
+      ru: {
+        tab_passenger: "Пассажир", tab_driver: "Водитель", tab_register: "Анкета", tab_support: "Помощь",
+        tap_map_hint: "Точка на карте:", pickup_short: "Откуда", dropoff_short: "Куда",
+        my_gps: "Где я", distance: "Расстояние", duration: "Время",
+        recommended_price: "Предлагаемая цена (RUB):", select_payment: "Способ оплаты водителю (напрямую):",
+        pay_cash: "Наличные (RUB)", pay_sbp: "Перевод СБП (РФ)", pay_cih: "CIH Bank (MAD)", pay_crypto: "Crypto (USDT)",
+        btn_order: "Заказать такси", driver_panel_title: "Доступные заказы пассажиров",
+        reg_title: "📝 Анкета водителя и реквизиты", btn_save_driver: "Отправить заявку администратору",
+        raise_hint: "💡 Хотите уехать быстрее? Поднимите цену:",
+        driver_assigned: "🚘 Водитель принял заказ:",
+        pay_to_driver: "Сумма и реквизиты для перевода водителю:",
+        btn_i_paid: "Я оплатил (Уведомить водителя)",
+        rate_driver: "Поездка завершена! Оцените водителя:",
+        btn_cancel_order: "Отменить заказ"
+      },
+      en: {
+        tab_passenger: "Passenger", tab_driver: "Driver", tab_register: "Driver Form", tab_support: "Support",
+        tap_map_hint: "Tap map to set pin:", pickup_short: "Pickup", dropoff_short: "Drop-off",
+        my_gps: "My GPS", distance: "Distance", duration: "Duration",
+        recommended_price: "Offered Price (RUB):", select_payment: "Direct P2P Payment Method:",
+        pay_cash: "Cash (RUB)", pay_sbp: "Phone Transfer (SBP)", pay_cih: "CIH Bank (MAD)", pay_crypto: "Crypto (USDT)",
+        btn_order: "Request Ride", driver_panel_title: "Live Passenger Orders",
+        reg_title: "📝 Driver & Payment Profile", btn_save_driver: "Submit Driver Application",
+        raise_hint: "💡 No drivers yet? Raise your offered price:",
+        driver_assigned: "🚘 Driver Assigned:",
+        pay_to_driver: "Amount & Driver Payment Details:",
+        btn_i_paid: "I Have Paid (Notify Driver)",
+        rate_driver: "Ride Completed! Rate your driver:",
+        btn_cancel_order: "Cancel Ride"
+      },
+      fr: {
+        tab_passenger: "Passager", tab_driver: "Chauffeur", tab_register: "Inscription", tab_support: "Support",
+        tap_map_hint: "Touchez la carte :", pickup_short: "Départ", dropoff_short: "Arrivée",
+        my_gps: "Ma position", distance: "Distance", duration: "Durée",
+        recommended_price: "Prix proposé (RUB) :", select_payment: "Mode de paiement direct (P2P) :",
+        pay_cash: "Espèces (RUB)", pay_sbp: "Transfert Tél (SBP)", pay_cih: "CIH Bank (MAD)", pay_crypto: "Crypto (USDT)",
+        btn_order: "Commander un Taxi", driver_panel_title: "Commandes Passagers en Direct",
+        reg_title: "📝 Inscription Chauffeur & Paiements", btn_save_driver: "Envoyer la demande à l'Admin",
+        raise_hint: "💡 Aucun chauffeur ? Augmentez votre prix :",
+        driver_assigned: "🚘 Chauffeur assigné :",
+        pay_to_driver: "Montant et coordonnées de paiement du chauffeur :",
+        btn_i_paid: "J'ai payé (Notifier le chauffeur)",
+        rate_driver: "Course terminée ! Notez le chauffeur :",
+        btn_cancel_order: "Annuler la course"
+      },
+      ar: {
+        tab_passenger: "راكب", tab_driver: "سائق", tab_register: "تسجيل سائق", tab_support: "الدعم",
+        tap_map_hint: "اضغط على الخريطة:", pickup_short: "الانطلاق", dropoff_short: "الوجهة",
+        my_gps: "موقعي", distance: "المسافة", duration: "الوقت",
+        recommended_price: "السعر المقترح (روبل RUB):", select_payment: "طريقة الدفع المباشر للسائق:",
+        pay_cash: "نقداً (RUB)", pay_sbp: "تحويل هاتف روسي (SBP)", pay_cih: "بنك CIH (درهم MAD)", pay_crypto: "عملات رقمية (USDT)",
+        btn_order: "اطلب تاكسي الآن", driver_panel_title: "طلبات الركاب المباشرة",
+        reg_title: "📝 تسجيل السائق وبيانات الدفع", btn_save_driver: "إرسال الطلب للإدارة",
+        raise_hint: "💡 لا يوجد سائق؟ ارفع السعر المقترح:",
+        driver_assigned: "🚘 السائق قبل الطلب:",
+        pay_to_driver: "المبلغ وبيانات الدفع للسائق:",
+        btn_i_paid: "لقد دفعت (إشعار السائق)",
+        rate_driver: "انتهت الرحلة! قيم السائق:",
+        btn_cancel_order: "إلغاء الطلب"
+      }
+    };
+
+    let currentLang = urlParams.get("lang") || "ru";
+    let pinMode = "pickup";
+    let paymentMethod = "cash";
+    let pickupCoords = null;
+    let dropoffCoords = null;
+    let currentKm = 0;
+    let currentMin = 0;
+    let currentPriceRub = 0;
+    let activePassengerRide = null;
+    let MAD_RATE = 0.105;
+    let USDT_RATE = 0.0105;
+
+    // Fetch live exchange rates (free keyless API)
+    fetch("https://open.er-api.com/v6/latest/RUB")
+      .then(r => r.json())
+      .then(d => {
+        if (d?.rates?.MAD) MAD_RATE = d.rates.MAD;
+        if (d?.rates?.USD) USDT_RATE = d.rates.USD;
+      }).catch(() => {});
+
+    function setLang(lang) {
+      currentLang = I18N[lang] ? lang : "ru";
+      document.documentElement.lang = currentLang;
+      document.documentElement.dir = currentLang === "ar" ? "rtl" : "ltr";
+      ["ru", "en", "fr", "ar"].forEach(l => {
+        document.getElementById("lang-" + l).className = l === currentLang
+          ? "px-2 py-1 rounded bg-amber-500 text-slate-950 font-bold"
+          : "px-2 py-1 rounded text-slate-300";
+      });
+      document.querySelectorAll("[data-i18n]").forEach(el => {
+        const k = el.getAttribute("data-i18n");
+        if (I18N[currentLang][k]) el.textContent = I18N[currentLang][k];
+      });
+    }
+
+    function switchTab(tab) {
+      ["passenger", "driver", "register", "support"].forEach(t => {
+        document.getElementById("view-" + t).classList.toggle("hidden", t !== tab);
+        document.getElementById("tab-" + t).className = t === tab
+          ? "py-2 rounded-lg bg-amber-500 text-slate-950 font-bold"
+          : "py-2 rounded-lg text-slate-300";
+      });
+      if (tab === "passenger" && map) setTimeout(() => map.invalidateSize(), 150);
+      if (tab === "driver") pollDriverOrders();
+    }
+
+    // --- LEAFLET + OPENSTREETMAP ---
+    const map = L.map("map").setView([55.7558, 37.6173], 11);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map);
+    let pickupMarker = null, dropoffMarker = null, routeLine = null;
+
+    function setPinMode(mode) {
+      pinMode = mode;
+      document.getElementById("pin-pickup-btn").className = mode === "pickup"
+        ? "px-2.5 py-1 rounded-lg bg-emerald-500 text-slate-950 font-bold"
+        : "px-2.5 py-1 rounded-lg bg-slate-700 text-slate-200";
+      document.getElementById("pin-dropoff-btn").className = mode === "dropoff"
+        ? "px-2.5 py-1 rounded-lg bg-rose-500 text-white font-bold"
+        : "px-2.5 py-1 rounded-lg bg-slate-700 text-slate-200";
+    }
+
+    map.on("click", async (e) => {
+      const { lat, lng } = e.latlng;
+      const addr = await reverseGeocode(lat, lng);
+      if (pinMode === "pickup") {
+        setPoint("pickup", lat, lng, addr);
+        setPinMode("dropoff");
+      } else {
+        setPoint("dropoff", lat, lng, addr);
+      }
+    });
+
+    async function reverseGeocode(lat, lon) {
+      try {
+        const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&accept-language=${currentLang}`);
+        const d = await res.json();
+        return d.display_name ? d.display_name.split(",").slice(0, 3).join(", ") : `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+      } catch { return `${lat.toFixed(4)}, ${lon.toFixed(4)}`; }
+    }
+
+    function setPoint(type, lat, lon, label) {
+      if (type === "pickup") {
+        pickupCoords = { lat, lon, label };
+        document.getElementById("pickup-input").value = label;
+        if (pickupMarker) map.removeLayer(pickupMarker);
+        pickupMarker = L.marker([lat, lon]).addTo(map).bindPopup("🅰 " + label).openPopup();
+      } else {
+        dropoffCoords = { lat, lon, label };
+        document.getElementById("dropoff-input").value = label;
+        if (dropoffMarker) map.removeLayer(dropoffMarker);
+        dropoffMarker = L.marker([lat, lon]).addTo(map).bindPopup("🅱 " + label).openPopup();
+      }
+      if (pickupCoords && dropoffCoords) calculateRouteAndPrice();
+    }
+
+    async function calculateRouteAndPrice() {
+      const url = `https://router.project-osrm.org/route/v1/driving/${pickupCoords.lon},${pickupCoords.lat};${dropoffCoords.lon},${dropoffCoords.lat}?overview=full&geometries=geojson`;
+      try {
+        const res = await fetch(url);
+        const data = await res.json();
+        if (data.routes?.length) {
+          const route = data.routes[0];
+          currentKm = +(route.distance / 1000).toFixed(1);
+          currentMin = Math.max(1, Math.round(route.duration / 60));
+          if (routeLine) map.removeLayer(routeLine);
+          routeLine = L.geoJSON(route.geometry, { style: { color: "#f59e0b", weight: 5 } }).addTo(map);
+          map.fitBounds(routeLine.getBounds(), { padding: [30, 30] });
+          const rawPrice = 100 + (currentKm * 25) + (currentMin * 5);
+          currentPriceRub = Math.max(150, Math.round(rawPrice / 10) * 10);
+          updatePriceDisplay();
+        }
+      } catch (e) {}
+    }
+
+    function updatePriceDisplay() {
+      document.getElementById("stat-km").textContent = currentKm.toFixed(1);
+      document.getElementById("stat-min").textContent = currentMin;
+      document.getElementById("price-rub").textContent = currentPriceRub;
+      document.getElementById("converted-price").textContent =
+        `≈ ${(currentPriceRub * MAD_RATE).toFixed(1)} MAD (CIH) | ≈ ${(currentPriceRub * USDT_RATE).toFixed(2)} USDT`;
+    }
+
+    function adjustPrice(delta) {
+      if (currentPriceRub === 0) currentPriceRub = 150;
+      currentPriceRub = Math.max(100, currentPriceRub + delta);
+      updatePriceDisplay();
+    }
+
+    let searchTimer = null;
+    function debouncedSearch(type) {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => runAddressSearch(type), 400);
+    }
+
+    async function runAddressSearch(type) {
+      const inputEl = document.getElementById(type + "-input");
+      const boxEl = document.getElementById(type + "-results");
+      const q = inputEl.value.trim();
+      if (q.length < 3) { boxEl.classList.add("hidden"); return; }
+      try {
+        const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&countrycodes=ru&limit=5&accept-language=${currentLang}&q=${encodeURIComponent(q)}`);
+        const items = await res.json();
+        boxEl.innerHTML = "";
+        if (!items.length) { boxEl.classList.add("hidden"); return; }
+        items.forEach(item => {
+          const shortName = item.display_name.split(",").slice(0, 3).join(", ");
+          const div = document.createElement("div");
+          div.className = "p-2.5 hover:bg-slate-800 cursor-pointer";
+          div.textContent = shortName;
+          div.onclick = () => {
+            boxEl.classList.add("hidden");
+            const lat = parseFloat(item.lat), lon = parseFloat(item.lon);
+            map.setView([lat, lon], 15);
+            setPoint(type, lat, lon, shortName);
+          };
+          boxEl.appendChild(div);
+        });
+        boxEl.classList.remove("hidden");
+      } catch (e) {}
+    }
+
+    function locateMe() {
+      if (!navigator.geolocation) return;
+      navigator.geolocation.getCurrentPosition(async pos => {
+        const { latitude, longitude } = pos.coords;
+        map.setView([latitude, longitude], 15);
+        const addr = await reverseGeocode(latitude, longitude);
+        setPoint("pickup", latitude, longitude, addr);
+        setPinMode("dropoff");
+      });
+    }
+
+    function selectPay(method) {
+      paymentMethod = method;
+      ["cash", "sbp", "cih", "crypto"].forEach(m => {
+        document.getElementById("pay-" + m).className = m === method
+          ? "py-2 px-2 rounded-xl border border-amber-400 bg-amber-500/20 text-amber-300 text-left"
+          : "py-2 px-2 rounded-xl border border-slate-700 bg-slate-900 text-slate-300 text-left";
+      });
+    }
+
+    // --- CREATE RIDE & LIVE PASSENGER POLLING ---
+    async function createOrder() {
+      if (!pickupCoords || !dropoffCoords) {
+        alert("Укажите точку Откуда (🅰) и Куда (🅱) на карте!");
+        return;
+      }
+      const res = await fetch("/api/create_ride", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          passenger_id: currentUserId,
+          pickup_address: pickupCoords.label,
+          pickup_lat: pickupCoords.lat,
+          pickup_lon: pickupCoords.lon,
+          dropoff_address: dropoffCoords.label,
+          dropoff_lat: dropoffCoords.lat,
+          dropoff_lon: dropoffCoords.lon,
+          distance_km: currentKm,
+          duration_min: currentMin,
+          price_rub: currentPriceRub,
+          payment_method: paymentMethod
+        })
+      });
+      const data = await res.json();
+      if (data.ok) pollPassengerRide();
+    }
+
+    async function pollPassengerRide() {
+      try {
+        const res = await fetch(`/api/passenger_state?user_id=${currentUserId}`);
+        const data = await res.json();
+        activePassengerRide = data.ride;
+        renderPassengerState();
+      } catch (e) {}
+    }
+
+    function renderPassengerState() {
+      const card = document.getElementById("passenger-active-card");
+      const form = document.getElementById("passenger-booking-form");
+      if (!activePassengerRide) {
+        card.classList.add("hidden");
+        form.classList.remove("hidden");
+        return;
+      }
+      card.classList.remove("hidden");
+      form.classList.add("hidden");
+
+      const r = activePassengerRide;
+      const mad = (r.price_rub * MAD_RATE).toFixed(1);
+      const usdt = (r.price_rub * USDT_RATE).toFixed(2);
+      document.getElementById("p-ride-price").textContent = `${r.price_rub} ₽`;
+      document.getElementById("p-ride-pickup").textContent = r.pickup_address;
+      document.getElementById("p-ride-dropoff").textContent = r.dropoff_address;
+
+      const statusLabels = {
+        searching: "🔍 Поиск водителя...",
+        accepted: "🚘 Водитель в пути к вам!",
+        arrived: "📍 Водитель ожидает вас на месте!",
+        paid_pending: "⏳ Ожидание подтверждения оплаты водителем..."
+      };
+      document.getElementById("p-ride-status").textContent = statusLabels[r.status] || r.status;
+      document.getElementById("p-raise-box").classList.toggle("hidden", r.status !== "searching");
+
+      const drvBox = document.getElementById("p-driver-box");
+      if (r.driver && r.status !== "searching") {
+        drvBox.classList.remove("hidden");
+        const d = r.driver;
+        const avg = (d.rating_sum / Math.max(1, d.rating_count)).toFixed(1);
+        document.getElementById("p-driver-info").innerHTML =
+          `<div>👤 <b>${d.full_name}</b> (⭐ ${avg})</div><div>🚗 ${d.car_model} — <b>${d.license_plate}</b></div>`;
+
+        const cihWarn = document.getElementById("p-cih-warning");
+        cihWarn.classList.toggle("hidden", r.payment_method !== "cih");
+
+        if (r.payment_method === "cash") {
+          document.getElementById("p-pay-amount").textContent = `${r.price_rub} RUB (Наличными водителю)`;
+          document.getElementById("p-pay-requisite").textContent = "Оплата наличными";
+        } else if (r.payment_method === "sbp") {
+          document.getElementById("p-pay-amount").textContent = `${r.price_rub} RUB (Перевод по СБП РФ)`;
+          document.getElementById("p-pay-requisite").textContent = d.sbp_phone || "Спросите у водителя";
+        } else if (r.payment_method === "cih") {
+          document.getElementById("p-pay-amount").textContent = `${mad} MAD (${r.price_rub} RUB) — CIH Bank`;
+          document.getElementById("p-pay-requisite").textContent = d.cih_account || "-";
+        } else if (r.payment_method === "crypto") {
+          document.getElementById("p-pay-amount").textContent = `${usdt} USDT (${r.price_rub} RUB)`;
+          document.getElementById("p-pay-requisite").textContent = d.crypto_wallet || "-";
+        }
+        document.getElementById("btn-passenger-paid").classList.toggle("hidden", r.status === "paid_pending");
+      } else {
+        drvBox.classList.add("hidden");
+      }
+    }
+
+    function copyRequisite() {
+      const text = document.getElementById("p-pay-requisite").textContent;
+      navigator.clipboard.writeText(text);
+      alert("📋 Скопировано: " + text);
+    }
+
+    async function raiseActiveRide(delta) {
+      if (!activePassengerRide) return;
+      const newPrice = activePassengerRide.price_rub + delta;
+      await fetch("/api/raise_price", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ride_id: activePassengerRide.ride_id, price_rub: newPrice })
+      });
+      pollPassengerRide();
+    }
+
+    async function setCustomActivePrice() {
+      const val = parseInt(document.getElementById("custom-price-input").value, 10);
+      if (!val || val < 100 || !activePassengerRide) return;
+      await fetch("/api/raise_price", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ride_id: activePassengerRide.ride_id, price_rub: val })
+      });
+      pollPassengerRide();
+    }
+
+    async function markPassengerPaid() {
+      if (!activePassengerRide) return;
+      await fetch("/api/ride_action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ride_id: activePassengerRide.ride_id, action: "passenger_paid", user_id: currentUserId })
+      });
+      pollPassengerRide();
+    }
+
+    async function cancelActiveRide() {
+      if (!activePassengerRide) return;
+      await fetch("/api/ride_action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ride_id: activePassengerRide.ride_id, action: "cancel", user_id: currentUserId })
+      });
+      pollPassengerRide();
+    }
+
+    // --- DRIVER PANEL & YANDEX NAVIGATOR DEEP LINK ---
+    async function pollDriverOrders() {
+      try {
+        const res = await fetch(`/api/driver_orders?driver_id=${currentUserId}`);
+        const data = await res.json();
+        renderDriverView(data);
+      } catch (e) {}
+    }
+
+    function renderDriverView(data) {
+      const activeEl = document.getElementById("driver-active-order");
+      const listEl = document.getElementById("driver-orders-list");
+
+      if (data.active_ride) {
+        const r = data.active_ride;
+        const yandexUrl = `https://yandex.ru/maps/?rtext=${r.pickup_lat},${r.pickup_lon}~${r.dropoff_lat},${r.dropoff_lon}&rtt=auto`;
+        activeEl.classList.remove("hidden");
+        activeEl.innerHTML = `
+          <div class="flex justify-between items-center border-b border-slate-700 pb-2">
+            <span class="font-bold text-emerald-400 text-xs">🚕 Активный заказ #${r.ride_id}</span>
+            <span class="font-extrabold text-amber-400 text-base">${r.price_rub} ₽ (${r.payment_method.toUpperCase()})</span>
+          </div>
+          <div class="text-xs space-y-1 text-slate-200">
+            <div>🅰 <b>Откуда:</b> ${r.pickup_address}</div>
+            <div>🅱 <b>Куда:</b> ${r.dropoff_address}</div>
+            <div>📏 ${r.distance_km} км | ⏱ ${r.duration_min} мин</div>
+          </div>
+          <a href="${yandexUrl}" target="_blank" class="block text-center w-full py-2.5 rounded-xl bg-amber-500 text-slate-950 font-extrabold text-xs">
+            🧭 Открыть маршрут в Яндекс Картах / Навигаторе
+          </a>
+          <div class="grid grid-cols-2 gap-2 pt-1">
+            <button onclick="driverAction(${r.ride_id}, 'arrived')" class="py-2.5 rounded-xl bg-blue-600 text-white font-bold text-xs">
+              📍 Я на месте
+            </button>
+            <button onclick="driverAction(${r.ride_id}, 'confirm_paid')" class="py-2.5 rounded-xl bg-emerald-500 text-slate-950 font-extrabold text-xs">
+              ✅ Оплата получена
+            </button>
+          </div>
+        `;
+      } else {
+        activeEl.classList.add("hidden");
+      }
+
+      if (!data.searching_rides || !data.searching_rides.length) {
+        listEl.innerHTML = `<div class="text-center py-6 text-slate-500">Пока нет новых заказов...</div>`;
+        return;
+      }
+
+      listEl.innerHTML = data.searching_rides.map(r => {
+        const yandexPreview = `https://yandex.ru/maps/?rtext=${r.pickup_lat},${r.pickup_lon}~${r.dropoff_lat},${r.dropoff_lon}&rtt=auto`;
+        return `
+          <div class="bg-slate-900 p-3 rounded-xl border border-slate-700 space-y-2">
+            <div class="flex justify-between items-center">
+              <span class="text-base font-extrabold text-amber-400">${r.price_rub} ₽</span>
+              <span class="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-300">${r.distance_km} км • ${r.duration_min} мин • ${r.payment_method.toUpperCase()}</span>
+            </div>
+            <div class="space-y-1 text-xs">
+              <div>🅰 ${r.pickup_address}</div>
+              <div>🅱 ${r.dropoff_address}</div>
+            </div>
+            <div class="flex gap-2 pt-1">
+              <a href="${yandexPreview}" target="_blank" class="flex-1 text-center py-2 rounded-lg bg-slate-800 border border-slate-600 text-xs font-semibold">
+                🧭 Яндекс Карты
+              </a>
+              <button onclick="driverAccept(${r.ride_id})" class="flex-1 py-2 rounded-lg bg-emerald-500 text-slate-950 font-extrabold text-xs">
+                ✅ Принять заказ
+              </button>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    async function driverAccept(rideId) {
+      const res = await fetch("/api/ride_action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ride_id: rideId, action: "accept", user_id: currentUserId })
+      });
+      const data = await res.json();
+      if (!data.ok) alert(data.error || "Сначала зарегистрируйтесь как водитель и получите одобрение Админа!");
+      pollDriverOrders();
+    }
+
+    async function driverAction(rideId, action) {
+      await fetch("/api/ride_action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ride_id: rideId, action, user_id: currentUserId })
+      });
+      pollDriverOrders();
+    }
+
+    async function submitDriverReg() {
+      const payload = {
+        user_id: currentUserId,
+        username: currentUsername,
+        full_name: document.getElementById("drv-name").value.trim(),
+        car_model: document.getElementById("drv-car").value.trim(),
+        license_plate: document.getElementById("drv-plate").value.trim(),
+        sbp_phone: document.getElementById("drv-sbp").value.trim() || "-",
+        cih_account: document.getElementById("drv-cih").value.trim() || "-",
+        crypto_wallet: document.getElementById("drv-crypto").value.trim() || "-"
+      };
+      if (!payload.full_name || !payload.car_model || !payload.license_plate) {
+        alert("Заполните Имя, Автомобиль и Госномер!");
+        return;
+      }
+      const res = await fetch("/api/register_driver", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if ((await res.json()).ok) {
+        const msg = document.getElementById("drv-status-msg");
+        msg.textContent = "✅ Заявка отправлена администратору в Telegram!";
+        msg.classList.remove("hidden");
+      }
+    }
+
+    async function sendSupportDispute() {
+      const text = document.getElementById("support-text").value.trim();
+      if (!text) return;
+      await fetch("/api/support", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: currentUserId, username: currentUsername, text })
+      });
+      document.getElementById("support-text").value = "";
+      alert("✅ Обращение отправлено администратору!");
+    }
+
+    setLang(currentLang);
+    pollPassengerRide();
+    setInterval(() => {
+      pollPassengerRide();
+      if (!document.getElementById("view-driver").classList.contains("hidden")) pollDriverOrders();
+    }, 4000);
+  </script>
+</body>
+</html>
